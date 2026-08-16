@@ -1,0 +1,332 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AI Research Pinboard</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- Firebase SDKs -->
+  <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore-compat.js"></script>
+</head>
+<body class="bg-gray-100 text-gray-800 font-sans pb-16 md:pb-0">
+
+  <!-- Startup Modal: Select or Create Project -->
+  <div id="projectModal" class="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
+    <div class="bg-white rounded-xl max-w-md w-full p-6 shadow-xl space-y-4">
+      <h2 class="text-xl font-bold">Select Project</h2>
+      <div id="existingProjectsList" class="space-y-2"></div>
+      <hr>
+      <h3 class="font-semibold text-sm text-gray-600">Start New Project</h3>
+      <input type="text" id="newProjectInput" placeholder="Project Name..." class="w-full border p-2 rounded-lg">
+      <button onclick="createNewProject()" class="w-full bg-blue-600 text-white py-2 rounded-lg font-medium hover:bg-blue-700">Create & Start</button>
+    </div>
+  </div>
+
+  <!-- Header / Navigation -->
+  <header class="bg-white border-b sticky top-0 z-10 px-4 py-3 flex justify-between items-center">
+    <h1 class="font-bold text-lg text-blue-600">AI Pinboard</h1>
+    <div class="flex items-center gap-3">
+      <span id="activeProjectLabel" class="text-xs bg-blue-100 text-blue-800 px-2.5 py-1 rounded-full font-semibold">No Project</span>
+      <button onclick="showProjectModal()" class="text-xs text-gray-500 underline">Switch</button>
+    </div>
+  </header>
+
+  <!-- View Switcher Tabs -->
+  <nav class="flex border-b bg-white">
+    <button onclick="switchTab('search')" id="tabBtnSearch" class="flex-1 py-3 text-center border-b-2 border-blue-600 font-medium text-blue-600">Search</button>
+    <button onclick="switchTab('projects')" id="tabBtnProjects" class="flex-1 py-3 text-center border-b-2 border-transparent font-medium text-gray-500">Project Pins</button>
+  </nav>
+
+  <!-- Main View Container -->
+  <main class="max-w-4xl mx-auto p-4">
+
+    <!-- SEARCH TAB -->
+    <section id="searchTab" class="space-y-4">
+      <div class="flex gap-2">
+        <input type="text" id="searchInput" placeholder="Search anything with AI..." class="flex-1 border p-3 rounded-xl shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+        <button onclick="performSearch()" class="bg-blue-600 text-white px-5 rounded-xl font-medium hover:bg-blue-700">Search</button>
+      </div>
+
+      <div id="searchResults" class="space-y-4"></div>
+    </section>
+
+    <!-- PROJECT PINS TAB -->
+    <section id="projectsTab" class="hidden space-y-6">
+      <div id="categoriesContainer" class="space-y-6"></div>
+    </section>
+
+  </main>
+
+  <script>
+    // Configuration
+    const VERCEL_API_URL = "YOUR_VERCEL_PROXY_URL"; // Example: https://ai-pinboard.vercel.app/api/search
+    
+    // Optional: Add Firebase keys to persist across ALL devices
+    const firebaseConfig = {
+      apiKey: "FIREBASE_API_KEY",
+      authDomain: "PROJECT_ID.firebaseapp.com",
+      projectId: "PROJECT_ID",
+      storageBucket: "PROJECT_ID.appspot.com",
+      messagingSenderId: "SENDER_ID",
+      appId: "APP_ID"
+    };
+
+    // Fallback to LocalStorage if Firebase is unconfigured
+    let activeProjectId = localStorage.getItem('activeProjId') || null;
+    let localData = JSON.parse(localStorage.getItem('pinboard_data')) || { projects: {} };
+
+    window.onload = () => {
+      renderProjectsList();
+      if (activeProjectId && localData.projects[activeProjectId]) {
+        document.getElementById('projectModal').classList.add('hidden');
+        updateProjectUI();
+      }
+    };
+
+    function showProjectModal() {
+      renderProjectsList();
+      document.getElementById('projectModal').classList.remove('hidden');
+    }
+
+    function renderProjectsList() {
+      const container = document.getElementById('existingProjectsList');
+      container.innerHTML = '';
+      const keys = Object.keys(localData.projects);
+      if (keys.length === 0) {
+        container.innerHTML = '<p class="text-sm text-gray-400">No saved projects found.</p>';
+        return;
+      }
+      keys.forEach(id => {
+        const p = localData.projects[id];
+        const btn = document.createElement('button');
+        btn.className = "w-full text-left p-2 border rounded-lg hover:bg-gray-50 flex justify-between items-center";
+        btn.innerHTML = `<span class="font-medium">${p.name}</span> <span class="text-xs text-gray-400">${p.pins.length} pins</span>`;
+        btn.onclick = () => selectProject(id);
+        container.appendChild(btn);
+      });
+    }
+
+    function createNewProject() {
+      const name = document.getElementById('newProjectInput').value.trim();
+      if (!name) return;
+      const id = 'proj_' + Date.now();
+      localData.projects[id] = { id, name, pins: [] };
+      saveData();
+      selectProject(id);
+    }
+
+    function selectProject(id) {
+      activeProjectId = id;
+      localStorage.setItem('activeProjId', id);
+      document.getElementById('projectModal').classList.add('hidden');
+      updateProjectUI();
+    }
+
+    function updateProjectUI() {
+      if (!activeProjectId) return;
+      const proj = localData.projects[activeProjectId];
+      document.getElementById('activeProjectLabel').innerText = proj.name;
+      renderProjectPins();
+    }
+
+    function saveData() {
+      localStorage.setItem('pinboard_data', JSON.stringify(localData));
+    }
+
+    function switchTab(tab) {
+      const sTab = document.getElementById('searchTab');
+      const pTab = document.getElementById('projectsTab');
+      const bSearch = document.getElementById('tabBtnSearch');
+      const bProj = document.getElementById('tabBtnProjects');
+
+      if (tab === 'search') {
+        sTab.classList.remove('hidden');
+        pTab.classList.add('hidden');
+        bSearch.className = "flex-1 py-3 text-center border-b-2 border-blue-600 font-medium text-blue-600";
+        bProj.className = "flex-1 py-3 text-center border-b-2 border-transparent font-medium text-gray-500";
+      } else {
+        sTab.classList.add('hidden');
+        pTab.classList.remove('hidden');
+        bSearch.className = "flex-1 py-3 text-center border-b-2 border-transparent font-medium text-gray-500";
+        bProj.className = "flex-1 py-3 text-center border-b-2 border-blue-600 font-medium text-blue-600";
+        renderProjectPins();
+      }
+    }
+
+    async function performSearch() {
+      const query = document.getElementById('searchInput').value.trim();
+      const resultsDiv = document.getElementById('searchResults');
+      if (!query) return;
+
+      resultsDiv.innerHTML = '<div class="p-4 bg-white rounded-xl shadow border text-gray-500 animate-pulse">Asking AI...</div>';
+
+      try {
+        const res = await fetch(VERCEL_API_URL, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ prompt: query })
+        });
+        const data = await res.json();
+        const text = data.candidates?.[0]?.content?.parts?.[0]?.text || "No result found.";
+
+        resultsDiv.innerHTML = `
+          <div class="bg-white p-5 rounded-xl border shadow-sm space-y-3">
+            <h3 class="font-bold text-gray-800">${query}</h3>
+            <p class="text-sm text-gray-600 whitespace-pre-wrap">${text}</p>
+            <button onclick="pinSearchResult('${encodeURIComponent(query)}', '${encodeURIComponent(text)}')" 
+              class="bg-blue-50 text-blue-600 border border-blue-200 text-xs px-3 py-1.5 rounded-lg font-semibold hover:bg-blue-100">
+              📌 Pin to Project
+            </button>
+          </div>
+        `;
+      } catch (e) {
+        resultsDiv.innerHTML = `<div class="p-4 bg-red-50 text-red-600 rounded-xl">Error fetching search results. Make sure VERCEL_API_URL is configured correctly.</div>`;
+      }
+    }
+
+    async function pinSearchResult(encodedQuery, encodedText) {
+      if (!activeProjectId) {
+        showProjectModal();
+        return;
+      }
+
+      const query = decodeURIComponent(encodedQuery);
+      const text = decodeURIComponent(encodedText);
+
+      // Ask Vercel AI to auto-categorize this pin based on topic context
+      let category = "General";
+      try {
+        const catRes = await fetch(VERCEL_API_URL, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ prompt: text, context: query, action: 'categorize' })
+        });
+        const catData = await catRes.json();
+        const rawJson = catData.candidates?.[0]?.content?.parts?.[0]?.text;
+        const parsed = JSON.parse(rawJson.replace(/```json|```/g, '').trim());
+        if (parsed.category) category = parsed.category;
+      } catch (e) {
+        console.log("Categorization fallback used");
+      }
+
+      const pin = {
+        id: 'pin_' + Date.now(),
+        query,
+        text,
+        category,
+        timestamp: new Date().toISOString()
+      };
+
+      localData.projects[activeProjectId].pins.push(pin);
+      saveData();
+      alert(`Pinned to "${category}"!`);
+    }
+
+    function renderProjectPins() {
+      const container = document.getElementById('categoriesContainer');
+      container.innerHTML = '';
+
+      if (!activeProjectId || !localData.projects[activeProjectId]) return;
+
+      const pins = localData.projects[activeProjectId].pins;
+      if (pins.length === 0) {
+        container.innerHTML = '<p class="text-center text-gray-400 py-8">No pinned items in this project yet.</p>';
+        return;
+      }
+
+      // Group pins by Category
+      const categories = {};
+      pins.forEach(pin => {
+        if (!categories[pin.category]) categories[pin.category] = [];
+        categories[pin.category].push(pin);
+      });
+
+      Object.keys(categories).forEach(catName => {
+        const catBox = document.createElement('div');
+        catBox.className = "bg-white p-5 rounded-xl border shadow-sm space-y-3";
+        
+        // Category Header & Export Options
+        catBox.innerHTML = `
+          <div class="flex justify-between items-center border-b pb-2">
+            <h3 class="font-bold text-gray-800 text-md">📁 ${catName}</h3>
+            <button onclick="exportCategory('${catName}')" class="text-xs text-blue-600 hover:underline">
+              Export Category ➔
+            </button>
+          </div>
+          <div class="space-y-3 mt-2" id="cat_items_${catName.replace(/\s+/g, '_')}"></div>
+        `;
+
+        container.appendChild(catBox);
+
+        const itemsBox = catBox.querySelector(`#cat_items_${catName.replace(/\s+/g, '_')}`);
+        categories[catName].forEach(pin => {
+          const item = document.createElement('div');
+          item.className = "bg-gray-50 p-3 rounded-lg border space-y-2";
+          item.innerHTML = `
+            <div class="flex justify-between items-start">
+              <span class="text-xs font-bold text-blue-600">${pin.query}</span>
+              <button onclick="exportSinglePin('${pin.id}')" class="text-[10px] bg-gray-200 text-gray-700 px-2 py-0.5 rounded hover:bg-gray-300">
+                Move Pin
+              </button>
+            </div>
+            <p class="text-xs text-gray-600">${pin.text}</p>
+          `;
+          itemsBox.appendChild(item);
+        });
+      });
+    }
+
+    function exportSinglePin(pinId) {
+      const targetProjName = prompt("Enter destination project name:");
+      if (!targetProjName) return;
+
+      let targetId = Object.keys(localData.projects).find(
+        id => localData.projects[id].name.toLowerCase() === targetProjName.toLowerCase()
+      );
+
+      if (!targetId) {
+        if (confirm(`Project "${targetProjName}" does not exist. Create it?`)) {
+          targetId = 'proj_' + Date.now();
+          localData.projects[targetId] = { id: targetId, name: targetProjName, pins: [] };
+        } else {
+          return;
+        }
+      }
+
+      const currentPins = localData.projects[activeProjectId].pins;
+      const pinIndex = currentPins.findIndex(p => p.id === pinId);
+      if (pinIndex > -1) {
+        const [movedPin] = currentPins.splice(pinIndex, 1);
+        localData.projects[targetId].pins.push(movedPin);
+        saveData();
+        renderProjectPins();
+        alert('Pin exported successfully!');
+      }
+    }
+
+    function exportCategory(catName) {
+      const targetProjName = prompt(`Export all "${catName}" pins to project name:`);
+      if (!targetProjName) return;
+
+      let targetId = Object.keys(localData.projects).find(
+        id => localData.projects[id].name.toLowerCase() === targetProjName.toLowerCase()
+      );
+
+      if (!targetId) {
+        targetId = 'proj_' + Date.now();
+        localData.projects[targetId] = { id: targetId, name: targetProjName, pins: [] };
+      }
+
+      const currentPins = localData.projects[activeProjectId].pins;
+      const exported = currentPins.filter(p => p.category === catName);
+      localData.projects[activeProjectId].pins = currentPins.filter(p => p.category !== catName);
+      
+      localData.projects[targetId].pins.push(...exported);
+      saveData();
+      renderProjectPins();
+      alert(`Exported entire category to "${targetProjName}"!`);
+    }
+  </script>
+</body>
+</html>
