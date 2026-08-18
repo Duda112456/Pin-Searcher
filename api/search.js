@@ -1,62 +1,58 @@
 export default async function handler(req, res) {
-  // CORS setup so your GitHub Pages site can talk to this Vercel function
-  res.setHeader('Access-Control-Allow-Credentials', true);
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS,PATCH,DELETE,POST,PUT');
-  res.setHeader(
-    'Access-Control-Allow-Headers',
-    'X-CSRF-Token, X-Requested-With, Accept, Accept-Version, Content-Length, Content-MD5, Content-Type, Date, X-Api-Version'
-  );
-
-  // Handle browser pre-flight requests
+  // Handle CORS preflight request
   if (req.method === 'OPTIONS') {
-    res.status(200).end();
-    return;
+    return res.status(200).end();
   }
 
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
-  // Safely read the API key from Vercel's environment variables
-  const apiKey = process.env.GEMINI_API_KEY;
-  if (!apiKey) {
-    return res.status(500).json({ error: 'GEMINI_API_KEY is not configured on Vercel.' });
-  }
-
-  const { prompt, action, context } = req.body;
-
   try {
-    let finalPrompt = prompt;
+    // Extract query parameters sent from frontend
+    const { prompt, context, action } = req.body || {};
+    const query = prompt || context;
 
-    // AI Auto-Categorization Prompt
-    if (action === 'categorize') {
-      finalPrompt = `
-        You are a categorization assistant.
-        Item to pin: "${prompt}"
-        Search Context: "${context}"
-        
-        Assign this pin to a short 1-2 word category name based on topic.
-        Respond ONLY with a raw JSON object matching this exact format:
-        {"category": "Category Name"}
-      `;
+    if (!query) {
+      return res.status(400).json({ error: 'No prompt or query provided' });
     }
 
-    // Call Google's Gemini API securely from the backend
-    const response = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          contents: [{ parts: [{ text: finalPrompt }] }]
-        })
-      }
-    );
+    const apiKey = process.env.GEMINI_API_KEY;
+    if (!apiKey) {
+      return res.status(500).json({ error: 'GEMINI_API_KEY environment variable is not configured on Vercel.' });
+    }
+
+    // Determine task: categorization prompt vs general search prompt
+    let systemPrompt = query;
+    if (action === 'categorize') {
+      systemPrompt = `Categorize the following text related to "${context || ''}" into a single concise category name. Return valid JSON only in this format: {"category": "CategoryName"}. Text: ${prompt}`;
+    }
+
+    // Call Gemini API directly
+    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        contents: [{
+          parts: [{ text: systemPrompt }]
+        }]
+      })
+    });
 
     const data = await response.json();
+
+    if (!response.ok) {
+      console.error("Gemini API Error:", data);
+      return res.status(response.status).json({ error: data.error?.message || 'Gemini API Error' });
+    }
+
+    // Return Gemini's exact response structure to match index.html expectations
     return res.status(200).json(data);
-  } catch (err) {
-    return res.status(500).json({ error: err.message });
+
+  } catch (error) {
+    console.error("Server Error:", error);
+    return res.status(500).json({ error: error.message || 'Internal Server Error' });
   }
 }
