@@ -60,7 +60,7 @@
 
   <script>
     // Configuration
-    const VERCEL_API_URL = "https://pin-searcher.vercel.app/api/search"
+    const VERCEL_API_URL = "https://pin-searcher.vercel.app/api/search";
     
     // Optional: Add Firebase keys to persist across ALL devices
     const firebaseConfig = {
@@ -168,7 +168,7 @@
           body: JSON.stringify({ prompt: query })
         });
         const data = await res.json();
-        const text = data.candidates?.[0]?.content?.parts?.[0]?.text || "No result found.";
+        const text = data.candidates?.[0]?.content?.parts?.[0]?.text || data.text || data.result || "No result found.";
 
         resultsDiv.innerHTML = `
           <div class="bg-white p-5 rounded-xl border shadow-sm space-y-3">
@@ -202,12 +202,21 @@
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ prompt: text, context: query, action: 'categorize' })
         });
+        
         const catData = await catRes.json();
-        const rawJson = catData.candidates?.[0]?.content?.parts?.[0]?.text;
-        const parsed = JSON.parse(rawJson.replace(/```json|```/g, '').trim());
-        if (parsed.category) category = parsed.category;
+        const rawJson = catData.candidates?.[0]?.content?.parts?.[0]?.text || catData.text || catData.result;
+
+        if (rawJson) {
+          const cleaned = rawJson.replace(/```json|```/g, '').trim();
+          try {
+            const parsed = JSON.parse(cleaned);
+            if (parsed.category) category = parsed.category;
+          } catch (err) {
+            category = cleaned; // Fallback to raw string if AI didn't format as JSON
+          }
+        }
       } catch (e) {
-        console.log("Categorization fallback used");
+        console.log("Categorization fallback used:", e);
       }
 
       const pin = {
@@ -247,6 +256,7 @@
         catBox.className = "bg-white p-5 rounded-xl border shadow-sm space-y-3";
         
         // Category Header & Export Options
+        const sanitizedCatId = catName.replace(/\s+/g, '_');
         catBox.innerHTML = `
           <div class="flex justify-between items-center border-b pb-2">
             <h3 class="font-bold text-gray-800 text-md">📁 ${catName}</h3>
@@ -254,12 +264,12 @@
               Export Category ➔
             </button>
           </div>
-          <div class="space-y-3 mt-2" id="cat_items_${catName.replace(/\s+/g, '_')}"></div>
+          <div class="space-y-3 mt-2" id="cat_items_${sanitizedCatId}"></div>
         `;
 
         container.appendChild(catBox);
 
-        const itemsBox = catBox.querySelector(`#cat_items_${catName.replace(/\s+/g, '_')}`);
+        const itemsBox = catBox.querySelector(`#cat_items_${sanitizedCatId}`);
         categories[catName].forEach(pin => {
           const item = document.createElement('div');
           item.className = "bg-gray-50 p-3 rounded-lg border space-y-2";
